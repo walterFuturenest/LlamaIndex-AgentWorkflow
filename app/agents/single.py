@@ -200,16 +200,30 @@ class FunctionCallingAgent(Workflow):
 
         # call tools -- safely!
         for tool_call in tool_calls:
+            # trace tool call
+            if self.write_events:
+                ctx.write_event_to_stream(
+                    AgentRunEvent(
+                        name=self.name, 
+                        msg=f"🛠️  Calling tool: {tool_call.tool_name} with args: {tool_call.tool_kwargs}"
+                    )
+                )
+            
             tool = tools_by_name.get(tool_call.tool_name)
             additional_kwargs = {
                 "tool_call_id": tool_call.tool_id,
                 "name": tool.metadata.get_name(),
             }
             if not tool:
+                error_msg = f"Tool {tool_call.tool_name} does not exist"
+                if self.write_events:
+                    ctx.write_event_to_stream(
+                        AgentRunEvent(name=self.name, msg=f"❌ Tool Error: {error_msg}")
+                    )
                 tool_msgs.append(
                     ChatMessage(
                         role="tool",
-                        content=f"Tool {tool_call.tool_name} does not exist",
+                        content=error_msg,
                         additional_kwargs=additional_kwargs,
                     )
                 )
@@ -221,6 +235,17 @@ class FunctionCallingAgent(Workflow):
                     tool_output = await tool.acall(ctx=ctx, **tool_call.tool_kwargs)
                 else:
                     tool_output = await tool.acall(**tool_call.tool_kwargs)
+                
+                # trace tool call result
+                if self.write_events:
+                    truncated_output = tool_output.content[:200] + "..." if len(tool_output.content) > 200 else tool_output.content
+                    ctx.write_event_to_stream(
+                        AgentRunEvent(
+                            name=self.name, 
+                            msg=f"✅ Tool {tool_call.tool_name} result: {truncated_output}"
+                        )
+                    )
+                
                 self.sources.append(tool_output)
                 tool_msgs.append(
                     ChatMessage(
@@ -230,10 +255,15 @@ class FunctionCallingAgent(Workflow):
                     )
                 )
             except Exception as e:
+                error_msg = f"Encountered error in tool call: {e}"
+                if self.write_events:
+                    ctx.write_event_to_stream(
+                        AgentRunEvent(name=self.name, msg=f"❌ Tool Error: {error_msg}")
+                    )
                 tool_msgs.append(
                     ChatMessage(
                         role="tool",
-                        content=f"Encountered error in tool call: {e}",
+                        content=error_msg,
                         additional_kwargs=additional_kwargs,
                     )
                 )
